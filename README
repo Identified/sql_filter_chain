@@ -1,0 +1,68 @@
+SqlFilterChain
+==============
+
+Sometimes, the query planner is really dumb, and you have to
+restructure your queries to run more efficiently.  This plugin is to
+help rewrite a certain class of these queries that match the form:
+
+     Find all elements in Table1 that match
+     criteria A from TableA and
+     criteria B from TableB and
+     criteria C from TableC [ and ... ]
+
+to be more performant by transforming them into the form:
+
+     Find all elements in Table1 that match criteria A from TableA.
+     Of those elements, throw out any that do not match criteria B
+     from TableB.  Of those elements, throw out any that do not match
+     criteria C from TableC.  [ ... ]
+
+The traditional approach for the original form is what happens when
+you chain together named scopes, which are very pretty but
+unfortunately often not performant.  
+
+This plugin adds a method, ActiveRecord::Base#sql_filter_chain which
+returns a scope that fetches the IDs matching the desired filters,
+allows you to treat it as a special named scope.
+
+Example
+=======
+
+# These examples are taken directly from the supplied test cases.  
+# Given a model with two attributes, name and email:
+
+class MyModel < ActiveRecord::Base
+  named_scope :bobs, :conditions => "name = 'Bob'"
+  named_scope :edu_emails, :conditions => "email ~* '.edu'"
+  named_scope :berkeley, :conditions => "email ~* 'berkeley'"
+end
+
+# Use the sql_filter_chain method to retrieve rows matching desired
+# criteria efficiently by passing in named scopes to be applied in
+# sequence.
+
+>>> winner = MyModel.create :name => "Bob", :email => "bob@berkeley.edu"
+>>> MyModel.create :name => "Dave", :email => "david@berkeley.edu"
+>>> MyModel.create :name => "Bob", :email => "bob@identified.com"
+>>> MyModel.sql_filter_chain(MyModel.bobs, MyModel.edu_emails, MyModel.berkeley) == [winner]
+ => true
+
+# Note that this still works with named scopes that require a join table:
+
+class MyModel < ActiveRecord::Base
+  has_one :my_score
+  named_scope :score_greater_than, lambda { |score| {:conditions => ["my_scores.score > ?", score], :joins => :my_score} }
+end
+
+class MyScore < ActiveRecord::Base
+  belongs_to :my_model
+end
+
+>>> lo = MyModel.create :name => "Bob", :email => "bob1@berkeley.edu"
+>>> hi = MyModel.create :name => "Bob", :email => "bob1@berkeley.edu"
+>>> MyScore.create :my_model => lo, :score => 0.0
+>>> MyScore.create :my_model => hi, :score => 10.0
+>>> MyModel.sql_filter_chain(MyModel.bobs, MyModel.edu_emails, MyModel.score_greater_than(1.0)) == [hi]
+ => true
+
+Copyright (c) 2011 [Identified Inc.], released under the MIT license
